@@ -11,6 +11,9 @@ import (
 	"github.com/Talen400/sp_b2b/internal/domain"
 )
 
+// createTransactionRequest é o payload esperado pelo POST /api/v1/transactions.
+// vendedor_cnpj e comprador_cnpj devem ser CNPJs de empresas já cadastradas.
+// valor_bruto é em centavos (int64). aliquotas em decimal (ex: 0.12 = 12%).
 type createTransactionRequest struct {
 	VendedorCNPJ  string  `json:"vendedor_cnpj"`
 	CompradorCNPJ string  `json:"comprador_cnpj"`
@@ -19,6 +22,9 @@ type createTransactionRequest struct {
 	AliquotaCBS   float64 `json:"aliquota_cbs"`
 }
 
+// createTransactionResponse é o retorno do POST /api/v1/transactions.
+// Inclui a transação persistida, os valores de crédito usado/gerado, e
+// opcionalmente o resultado da notificação à Plataforma Pública.
 type createTransactionResponse struct {
 	Transaction    domain.Transaction `json:"transaction"`
 	CreditoUsado   int64              `json:"credito_usado"`
@@ -26,6 +32,19 @@ type createTransactionResponse struct {
 	PPNotification *PPNotification    `json:"pp_notification,omitempty"`
 }
 
+// CreateTransaction lida com POST /api/v1/transactions.
+//
+// Fluxo:
+//  1. Valida o payload (campos obrigatórios, valor bruto positivo).
+//  2. Calcula o split (CalculateSplit).
+//  3. Consulta vendedor e comprador no repositório.
+//  4. Calcula crédito usado (UseCredit) e gerado (ApplyCredit).
+//  5. Persiste a transação e atualiza os saldos de crédito.
+//  6. Se houver PP notifier configurado, dispara notificação ao mock.
+//
+// Responde 201 com a transação criada, ou 400/404/500 em caso de erro.
+// O campo pp_notification aparece apenas quando -pp-url está configurado
+// (status "sent") ou quando não está (status "skipped").
 func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	var req createTransactionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -114,6 +133,9 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+// GetTransaction lida com GET /api/v1/transactions/{id}.
+// Retorna os detalhes de uma transação pelo ID.
+// Responde 200 ou 404.
 func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -133,6 +155,10 @@ func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, txn)
 }
 
+// ListTransactions lida com GET /api/v1/transactions.
+// Aceita filtro opcional por CNPJ (?cnpj=...). Se fornecido, retorna
+// transações onde o CNPJ é vendedor ou comprador.
+// Sempre retorna um array (pode ser vazio).
 func (h *Handler) ListTransactions(w http.ResponseWriter, r *http.Request) {
 	cnpj := r.URL.Query().Get("cnpj")
 	txns, err := h.transactionRepo.List(cnpj)

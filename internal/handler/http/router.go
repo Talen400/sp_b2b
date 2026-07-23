@@ -1,3 +1,9 @@
+// Pacote httpapi implementa a camada HTTP da API REST.
+// Cada handler é um método de Handler, que recebe as interfaces de
+// repositório e um callback opcional para notificar a Plataforma Pública.
+//
+// Nenhuma regra de negócio vaza para dentro destes handlers — eles
+// decodificam o request, chamam domínio/repositório, e codificam a resposta.
 package httpapi
 
 import (
@@ -8,25 +14,29 @@ import (
 	"github.com/Talen400/sp_b2b/internal/repository"
 )
 
-// PPNotification is the result of notifying the Plataforma Pública mock.
+// PPNotification é o resultado da notificação opcional à Plataforma Pública.
+// Aparece no response do POST /transactions quando -pp-url está configurado.
 type PPNotification struct {
-	Status          string `json:"status"`                      // "skipped", "sent", "failed"
-	Arrangement     string `json:"arrangement,omitempty"`       // e.g. "boleto"
-	PPMessageID     string `json:"pp_message_id,omitempty"`     // Message-Id sent
-	PPCorrelationID string `json:"pp_correlation_id,omitempty"` // Correlation-Id sent
-	Error           string `json:"error,omitempty"`             // error detail if failed
+	Status          string `json:"status"`                      // "skipped", "sent" ou "failed"
+	Arrangement     string `json:"arrangement,omitempty"`       // arranjo notificado (ex: "boleto")
+	PPMessageID     string `json:"pp_message_id,omitempty"`     // Message-Id enviado à PP
+	PPCorrelationID string `json:"pp_correlation_id,omitempty"` // Correlation-Id enviado à PP
+	Error           string `json:"error,omitempty"`             // detalhe do erro se status = "failed"
 }
 
-// PPNotifyFunc is called after a transaction is created to optionally notify the PP mock.
-// The function should not block the response — implementations should use a short timeout.
+// PPNotifyFunc é o callback disparado após criar uma transação com sucesso.
+// A implementação é injetada pelo main.go a partir da flag -pp-url.
+// Deve respeitar o contexto (timeout de 5s) para não travar a resposta.
 type PPNotifyFunc func(ctx context.Context, txn domain.Transaction) *PPNotification
 
+// Handler agrupa os dependências compartilhadas por todos os handlers HTTP.
 type Handler struct {
 	companyRepo     repository.CompanyRepo
 	transactionRepo repository.TransactionRepo
 	ppNotify        PPNotifyFunc
 }
 
+// NewHandler cria um Handler sem notificação PP.
 func NewHandler(cr repository.CompanyRepo, tr repository.TransactionRepo) *Handler {
 	return &Handler{
 		companyRepo:     cr,
@@ -34,6 +44,8 @@ func NewHandler(cr repository.CompanyRepo, tr repository.TransactionRepo) *Handl
 	}
 }
 
+// NewHandlerWithPP cria um Handler com callback de notificação PP.
+// O callback é disparado após cada POST /transactions bem-sucedido.
 func NewHandlerWithPP(cr repository.CompanyRepo, tr repository.TransactionRepo, ppn PPNotifyFunc) *Handler {
 	return &Handler{
 		companyRepo:     cr,
@@ -42,6 +54,8 @@ func NewHandlerWithPP(cr repository.CompanyRepo, tr repository.TransactionRepo, 
 	}
 }
 
+// Router monta o http.ServeMux com todas as rotas da API.
+// Usa o roteamento por método+path do Go 1.22+ (ServeMux nativo).
 func (h *Handler) Router() http.Handler {
 	mux := http.NewServeMux()
 

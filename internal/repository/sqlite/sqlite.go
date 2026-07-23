@@ -1,3 +1,6 @@
+// Pacote sqlite implementa as interfaces repository.CompanyRepo e
+// repository.TransactionRepo usando SQLite puro-Go (modernc.org/sqlite,
+// sem cgo). As migrations são embutidas no binário via //go:embed.
 package sqlite
 
 import (
@@ -15,10 +18,14 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// DB é um wrapper sobre *sql.DB com limite de 1 conexão simultânea
+// (SQLite não lida bem com concorrência de escrita).
 type DB struct {
 	db *sql.DB
 }
 
+// Open abre (ou cria) o arquivo SQLite no path informado.
+// O driver usado é modernc.org/sqlite, implementação pura em Go.
 func Open(path string) (*DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -28,10 +35,13 @@ func Open(path string) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
+// Close fecha a conexão com o banco.
 func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+// Migrate aplica todos os arquivos .sql embutidos em migrations/.
+// Executa na ordem alfabética dos nomes de arquivo.
 func (d *DB) Migrate() error {
 	entries, err := migrationsFS.ReadDir("migrations")
 	if err != nil {
@@ -49,22 +59,28 @@ func (d *DB) Migrate() error {
 	return nil
 }
 
+// CompanyRepository implementa repository.CompanyRepo com SQLite.
 type CompanyRepository struct {
 	db *DB
 }
 
+// TransactionRepository implementa repository.TransactionRepo com SQLite.
 type TransactionRepository struct {
 	db *DB
 }
 
+// NewCompanyRepository cria um CompanyRepository a partir de uma conexão DB.
 func NewCompanyRepository(db *DB) *CompanyRepository {
 	return &CompanyRepository{db: db}
 }
 
+// NewTransactionRepository cria um TransactionRepository a partir de uma conexão DB.
 func NewTransactionRepository(db *DB) *TransactionRepository {
 	return &TransactionRepository{db: db}
 }
 
+// Create insere uma nova empresa com saldo de crédito inicial zero.
+// Retorna erro se o CNPJ já existir (violação da constraint UNIQUE).
 func (r *CompanyRepository) Create(cnpj, nome string) error {
 	_, err := r.db.db.Exec(
 		"INSERT INTO companies (cnpj, nome, saldo_credito) VALUES (?, ?, 0)",
@@ -79,6 +95,7 @@ func (r *CompanyRepository) Create(cnpj, nome string) error {
 	return nil
 }
 
+// Get consulta uma empresa pelo CNPJ. Retorna erro se não existir.
 func (r *CompanyRepository) Get(cnpj string) (domain.Company, error) {
 	row := r.db.db.QueryRow(
 		"SELECT cnpj, nome, saldo_credito FROM companies WHERE cnpj = ?", cnpj,
@@ -93,6 +110,7 @@ func (r *CompanyRepository) Get(cnpj string) (domain.Company, error) {
 	return c, nil
 }
 
+// List retorna todas as empresas ordenadas por nome.
 func (r *CompanyRepository) List() ([]domain.Company, error) {
 	rows, err := r.db.db.Query("SELECT cnpj, nome, saldo_credito FROM companies ORDER BY nome")
 	if err != nil {
@@ -111,6 +129,8 @@ func (r *CompanyRepository) List() ([]domain.Company, error) {
 	return companies, rows.Err()
 }
 
+// UpdateCredit atualiza o saldo de crédito de uma empresa.
+// Retorna erro se o CNPJ não for encontrado.
 func (r *CompanyRepository) UpdateCredit(cnpj string, novoSaldo int64) error {
 	res, err := r.db.db.Exec("UPDATE companies SET saldo_credito = ? WHERE cnpj = ?", novoSaldo, cnpj)
 	if err != nil {
@@ -123,6 +143,8 @@ func (r *CompanyRepository) UpdateCredit(cnpj string, novoSaldo int64) error {
 	return nil
 }
 
+// Create persiste uma transação com todos os campos do split já calculados.
+// O timestamp é armazenado como string RFC 3339.
 func (r *TransactionRepository) Create(t domain.Transaction) error {
 	_, err := r.db.db.Exec(
 		`INSERT INTO transactions
@@ -140,6 +162,8 @@ func (r *TransactionRepository) Create(t domain.Transaction) error {
 	return nil
 }
 
+// List retorna as transações ordenadas por timestamp.
+// Se cnpjFilter não for vazio, filtra por CNPJ (vendedor ou comprador).
 func (r *TransactionRepository) List(cnpjFilter string) ([]domain.Transaction, error) {
 	var query string
 	var args []interface{}
@@ -178,6 +202,7 @@ func (r *TransactionRepository) List(cnpjFilter string) ([]domain.Transaction, e
 	return transactions, rows.Err()
 }
 
+// Get consulta uma transação pelo ID. Retorna erro se não existir.
 func (r *TransactionRepository) Get(id string) (domain.Transaction, error) {
 	row := r.db.db.QueryRow(
 		`SELECT id, vendedor_cnpj, comprador_cnpj, valor_bruto,
@@ -200,6 +225,7 @@ func (r *TransactionRepository) Get(id string) (domain.Transaction, error) {
 	return t, nil
 }
 
+// isUniqueConstraintErr verifica se o erro do SQLite é violação de UNIQUE.
 func isUniqueConstraintErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE")
 }

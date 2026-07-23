@@ -8,11 +8,15 @@ import (
 	"github.com/Talen400/sp_b2b/internal/domain"
 )
 
+// createCompanyRequest é o payload esperado pelo POST /api/v1/companies.
 type createCompanyRequest struct {
-	CNPJ string `json:"cnpj"`
-	Nome string `json:"nome"`
+	CNPJ string `json:"cnpj"` // CNPJ da empresa (string livre)
+	Nome string `json:"nome"` // Nome fantasia
 }
 
+// CreateCompany lida com POST /api/v1/companies.
+// Cria uma nova empresa com saldo de crédito inicial zero.
+// Responde 201 com a empresa criada, ou 400/409 em caso de erro.
 func (h *Handler) CreateCompany(w http.ResponseWriter, r *http.Request) {
 	var req createCompanyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -39,6 +43,9 @@ func (h *Handler) CreateCompany(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, company)
 }
 
+// GetCompany lida com GET /api/v1/companies/{cnpj}.
+// Retorna os dados da empresa + saldo de crédito atual.
+// Responde 200 ou 404.
 func (h *Handler) GetCompany(w http.ResponseWriter, r *http.Request) {
 	cnpj := r.PathValue("cnpj")
 	if cnpj == "" {
@@ -58,6 +65,9 @@ func (h *Handler) GetCompany(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, company)
 }
 
+// ListCompanies lida com GET /api/v1/companies.
+// Retorna a lista de todas as empresas cadastradas, ordenadas por nome.
+// Sempre retorna um array (pode ser vazio).
 func (h *Handler) ListCompanies(w http.ResponseWriter, r *http.Request) {
 	companies, err := h.companyRepo.List()
 	if err != nil {

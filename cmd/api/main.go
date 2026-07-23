@@ -1,3 +1,23 @@
+// main é o entrypoint da API.
+//
+// Flags:
+//
+//	-port: porta do servidor (default 8080)
+//	-db: caminho do arquivo SQLite (default data/split.db)
+//	-migrate: só roda as migrations e sai
+//	-seed: popula banco com cenário de demonstração e sai
+//	-pp-url: URL da Plataforma Pública (mock Prism). Ex: http://localhost:4010
+//	-pp-tenant: Tenant-Id para enviar à PP (default PSP-SIMULADOR-001)
+//
+// Fluxo normal: migrate → servidor HTTP.
+// Se -pp-url for fornecido, notifica a PP a cada POST /transactions.
+//
+// Uso:
+//
+//	go run ./cmd/api
+//	go run ./cmd/api -migrate
+//	go run ./cmd/api -seed
+//	go run ./cmd/api -pp-url http://localhost:4010
 package main
 
 import (
@@ -81,6 +101,17 @@ func main() {
 	}
 }
 
+// newHandlerWithPP cria um Handler HTTP, opcionalmente com notificação PP.
+//
+// Se ppURL não for vazio:
+//   - Cria um cliente pp.Client apontando para ppURL.
+//   - Cria um PPNotifyFunc que, a cada POST /transactions, monta um
+//     InformeTransacaoIniciadaRequest e envia para o mock.
+//   - O arranjo é fixo em "boleto" (simplificação didática).
+//   - Timeout de 5s por notificação; se falhar, o response da API ainda
+//     é 201 com pp_notification.status = "failed".
+//
+// Se ppURL for vazio: retorna um Handler sem notificação.
 func newHandlerWithPP(cr *sqlite.CompanyRepository, tr *sqlite.TransactionRepository, ppURL, ppTenant string) *httpapi.Handler {
 	if ppURL == "" {
 		return httpapi.NewHandler(cr, tr)

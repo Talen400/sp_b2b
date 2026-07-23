@@ -1,3 +1,17 @@
+// Pacote seed popula o banco com o cenário de demonstração
+// (3 empresas, 2 transações). Usado via `make seed` ou `go run ./cmd/api -seed`.
+//
+// Cenário:
+//   - Fazenda Boa Vista vende matéria-prima para Fábrica de Sucos (R$ 1.000,00)
+//   - Fábrica de Sucos processa e vende para Mercado Central (R$ 3.000,00)
+//   - Em cada venda, o split de IBS (12%) e CBS (3%) é calculado e o crédito
+//     tributário é transferido ao comprador (não-cumulatividade).
+//
+// Resultado esperado ao final:
+//   - Fazenda: saldo de crédito = 0 (vendeu, usou crédito)
+//   - Fábrica: saldo de crédito = R$ 300,00 (comprou R$ 150 de crédito,
+//     vendeu usando R$ 150 de crédito, gerou R$ 450 → saldo R$ 450 - R$ 150 = R$ 300)
+//   - Mercado: saldo de crédito = R$ 450,00 (só comprou, não vendeu)
 package seed
 
 import (
@@ -8,6 +22,9 @@ import (
 	"github.com/Talen400/sp_b2b/internal/repository"
 )
 
+// Run popula o banco com o cenário de demonstração Fazenda → Fábrica → Mercado.
+// Cria as 3 empresas e as 2 transações, atualizando os saldos de crédito.
+// Imprime o resumo de cada passo no stdout.
 func Run(cr repository.CompanyRepo, tr repository.TransactionRepo) error {
 	companies := []struct {
 		cnpj string
