@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,9 +20,10 @@ type createTransactionRequest struct {
 }
 
 type createTransactionResponse struct {
-	Transaction   domain.Transaction `json:"transaction"`
-	CreditoUsado  int64              `json:"credito_usado"`
-	CreditoGerado int64              `json:"credito_gerado"`
+	Transaction    domain.Transaction `json:"transaction"`
+	CreditoUsado   int64              `json:"credito_usado"`
+	CreditoGerado  int64              `json:"credito_gerado"`
+	PPNotification *PPNotification    `json:"pp_notification,omitempty"`
 }
 
 func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -95,11 +97,21 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createTransactionResponse{
+	resp := createTransactionResponse{
 		Transaction:   txn,
 		CreditoUsado:  creditoUsado,
 		CreditoGerado: creditoGerado,
-	})
+	}
+
+	if h.ppNotify != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		resp.PPNotification = h.ppNotify(ctx, txn)
+	} else {
+		resp.PPNotification = &PPNotification{Status: "skipped"}
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {

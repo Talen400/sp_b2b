@@ -3,6 +3,10 @@
 API REST que simula o fluxo de **split payment** B2B (segregação automática de
 IBS/CBS + crédito tributário simplificado), com persistência em SQLite.
 
+Inclui um **cliente HTTP para a Plataforma Pública do Split Payment** (RFB/CGIBS)
+que pode ser usado com um mock local (Prism) para validar que os payloads seguem
+o contrato real do governo.
+
 Projeto irmão do vault de contexto tributário em `vault/` (notas Obsidian sobre
 a Reforma Tributária).
 
@@ -60,6 +64,63 @@ curl http://localhost:8080/api/v1/companies/22.222.222/0001-22
 curl http://localhost:8080/api/v1/transactions
 ```
 
+## Sandbox de Integração (Fase 7)
+
+O sandbox usa o **Prism** (Stoplight) para subir um mock local da Plataforma
+Pública a partir do OpenAPI oficial (`cgibs/openapi-v0_0_10.json`).
+
+### Pré-requisito
+
+Node.js + npx (Prism é baixado automaticamente via npx).
+
+### Como usar
+
+**Terminal 1 — mock da PP:**
+
+```bash
+make sandbox
+# Saída: servidor rodando em http://localhost:4010
+```
+
+**Terminal 2 — nossa API apontando pro mock:**
+
+```bash
+make run -pp-url http://localhost:4010 -pp-tenant PSP-SIMULADOR-001
+```
+
+Ou via variável de ambiente (não implementado — use flags por enquanto).
+
+### O que acontece
+
+Ao criar uma transação via `POST /api/v1/transactions` com `-pp-url` ativado,
+a API dispara uma notificação síncrona para o mock:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/transactions \
+  -H "Content-Type: application/json" \
+  -d '{"vendedor_cnpj":"11.111.111/0001-11","comprador_cnpj":"22.222.222/0001-22","valor_bruto":100000,"aliquota_ibs":0.12,"aliquota_cbs":0.03}'
+```
+
+Response inclui:
+
+```json
+{
+  "transaction": { ... },
+  "pp_notification": {
+    "status": "sent",
+    "arrangement": "boleto"
+  }
+}
+```
+
+Se `-pp-url` não for passado, `pp_notification.status` é `"skipped"`.
+
+### Limitações do mock
+
+- Prism valida schema e headers, mas **não executa lógica de negócio** (não corrige valores, não mantém estado).
+- Endpoints de long polling com token de posição podem não funcionar plenamente no Prism.
+- O fluxo de segregação real (2x/dia, lote, repasse financeiro) não é simulado.
+
 ## Makefile
 
 | Target | Descrição |
@@ -71,6 +132,8 @@ curl http://localhost:8080/api/v1/transactions
 | `make seed` | Popula cenário de demonstração |
 | `make clean` | Remove bin/ e banco |
 | `make re` | Clean + build |
+| `make sandbox` | Sobe mock Prism da PP em http://localhost:4010 |
+| `make help` | Lista todos os targets |
 
 ## Sobre o split payment
 

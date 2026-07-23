@@ -1,4 +1,4 @@
-# REFERENCES.md — Contexto de domínio
+# REFERENCES.md — Contexto de domínio + engenharia
 
 ## O que é o split payment (resumo)
 Mecanismo da Reforma Tributária (Emenda Constitucional nº 132/2023 e Lei
@@ -26,56 +26,84 @@ consumidor final) esse crédito não existe pro comprador, porque ele é quem
 efetivamente arca com o tributo — é aí que a simulação B2B difere da simulação
 B2C original.
 
-## O split payment de verdade (fonte: Manual de Operações e Manual de Integração, RFB/CGIBS/Serpro, jun/2026)
-
-Isso aqui resume a documentação técnica oficial que temos em mãos — é mais preciso que qualquer coisa
-que eu tenha achado via busca na web antes.
-
-**Fase 1 = "B2B Opcional".** O split só se aplica a operações entre PJs (Pagador Original e Recebedor
-precisam ter CNPJ). É facultativo pra quem origina a transação (só ativa se preencher os campos de
-CBS/IBS), mas obrigatório pros PSPs disponibilizarem.
-
-**Seis arranjos, dois modelos:**
-- **Modelo Inteligente** (arranjos iniciados pelo **Pagador**: Pix Estático, TED, TEF) — o valor do
-  tributo é o que o Pagador informou, ponto. Sem correção do governo depois.
-- **Modelo Super Inteligente** (arranjos iniciados pelo **Recebedor**: Boleto, Pix Dinâmico, Pix
-  Automático) — o Recebedor informa o valor ao criar a cobrança, mas a Receita/CGIBS podem corrigir
-  esse valor (ou reduzi-lo, se parte do débito já foi extinta) até a baixa da transação, via retorno da
-  Plataforma Pública.
-
-**Papéis de PSP:** existe PSP Pagador Direto/Indireto e PSP Recebedor Direto/Indireto. O PSP Recebedor
-**Direto** é sempre quem responde regulatoriamente pelo split perante a Plataforma Pública — mesmo que
-exista um PSP Indireto na relação comercial com o cliente final.
-
-**Categorias de valor de tributo** (todas em centavos, decimal 18,2): Informado → Corrigido → Em Aberto
-→ Segregado (o que efetivamente vira Repasse Financeiro) → Aplicado (o que é mostrado ao Pagador).
-
-**Fluxo de comunicação com o governo:** Informe de Transação Iniciada → (Retorno Super Inteligente,
-quando aplicável) → Informe Preliminar de Pagamento (informativo) → Informe de Segregação (definitivo,
-2x/dia útil, gera obrigação de Repasse Financeiro) → Repasse Financeiro em D+N via eventos TES (CBS) e
-STR (IBS).
-
-**Simplificações que nosso simulador ainda assume** (ver TASK.md pra escopo real do MVP):
-- Não simulamos a Plataforma Pública nem o Super Inteligente — nosso simulador é puramente Modelo
-  Inteligente simplificado (valor informado = valor segregado).
-- Sem Documento Fiscal, sem CNPJ alfanumérico (o real usa formato novo a partir de 07/2026, IN RFB
-  2.229/2024), sem distinção de PSP Direto/Indireto.
-- Nosso "crédito tributário" é uma simplificação didática — o mecanismo real de crédito B2B não faz
-  parte do escopo do Manual de Operações do split payment (que trata só da segregação e repasse, não da
-  apuração/crédito, que é assunto de outro normativo).
-
 ## Documentos oficiais que temos como referência primária
+
+Todos em `cgibs/`:
 - **Manual de Operações — Split Payment** (RFB/Serpro/CGIBS/Procergs, versão preliminar, jun/2026):
   fluxos de negócio, os 6 arranjos, modelos Inteligente/Super Inteligente, responsabilidades dos PSPs,
-  MOC (Mecanismo de Ocorrências).
+  MOC, ciclo de vida dos informes, repasse financeiro.
 - **Manual de Integração — Plataforma Pública de Split Payment** (v1.0): dicionário de campos, payloads,
-  endpoints REST por arranjo, política de tratamento de erros (RFC 7807), headers padrão.
-- **OpenAPI v0.0.10**: especificação machine-readable dos endpoints (formato JSON/Swagger).
+  endpoints REST por arranjo, política de tratamento de erros (RFC 7807), headers padrão, mTLS/OAuth.
+- **OpenAPI v0.0.10**: especificação machine-readable dos endpoints (formato JSON/Swagger, 201K).
 
-Esses três documentos já estão nos uploads do projeto — se o agente precisar de detalhe fino sobre um
-campo, endpoint ou regra de negócio, a fonte é esses arquivos, não a internet.
+Os PDFs foram extraídos para `/tmp/manual-integracao.txt` (3773 linhas) e `/tmp/manual-operacoes.txt`
+(2728 linhas). As seções abaixo resumem os pontos mais relevantes extraídos dos PDFs reais.
+
+### Headers HTTP obrigatórios (Manual de Integração, seção 4)
+- `Message-Id`: UUID4, obrigatório, idempotência.
+- `Correlation-Id`: UUID4, rastreio ponta a ponta.
+- `Tenant-Id`: identificador do PSP na PP.
+- `Timestamp`: RFC 3339.
+
+### Formato Decimal(18,2)
+- 18 dígitos no total, 2 decimais.
+- No payload JSON: string, ex: `"1234567890123456.78"`.
+- Em nosso Go: centavos `int64`, convertido na serialização.
+- Valores de tributo: `vlIbs`, `vlCbs`, `vlInf`, `vlCbsCorr`, `vlIbsSeg`, etc.
+- Duas casas decimais, sem arredondamento bancário.
+
+### Os 6 arranjos
+| Arranjo | Modelo | Iniciado por | Informe Transação |
+|---|---|---|---|
+| Boleto | Super Inteligente | Recebedor | Obrigatório |
+| Pix Dinâmico | Super Inteligente | Recebedor | Obrigatório |
+| Pix Automático | Super Inteligente | Recebedor | Obrigatório |
+| Pix Estático | Inteligente | Pagador | N/A |
+| TED | Inteligente | Pagador | N/A |
+| TEF | Inteligente | Pagador | N/A |
+
+### 5 categorias de valor de tributo
+1. **Valor Informado** (`vlInfo`): o que consta no Documento Fiscal.
+2. **Valor Corrigido** (`vlCorr`): correção do Super Inteligente (se aplicável).
+3. **Valor Em Aberto** (`vlAberto`): parte do débito ainda não liquidada.
+4. **Valor Segregado** (`vlSeg`): o que efetivamente foi separado no pagamento — base do Repasse Financeiro.
+5. **Valor Aplicado** (`vlApl`): o que é mostrado ao Pagador no extrato.
+
+### Política de erros (Manual de Integração, seção 5)
+- Formato: RFC 7807, media type `application/problem+json`.
+- Campos: `type` (URI), `title`, `status`, `detail`, `instance`, `retornabilidade`.
+- Erros de validação: 400/422 com `type` específico.
+- Erros internos: 500, sem detalhes no response.
+- `retornabilidade`: booleano indicando se o PSP pode retentar a requisição.
+
+### Long polling / Retorno Super Inteligente (Manual de Integração, seção 3.6)
+- Modelo pull-based: PSP consulta PP por novas mensagens.
+- Token de posição trocado em cada response (header `proximoToken`).
+- Fluxo: `GET /start` → recebe mensagens + token → `GET /{token}` → ... → `DELETE /{token}`.
+- Consulta retroativa: `/api/v1/retroativo/{arrj}/{idPsp}/tributos/stream/start?fromNsu=X&toNsu=Y`.
+- Timeout configurável na PP (long polling HTTP).
 
 ## Simplificações que estamos assumindo na simulação
+- Não simulamos a Plataforma Pública nem o Super Inteligente em modo real — o mock Prism valida
+  o contrato, mas não executa lógica de negócio.
+- Nosso "crédito tributário" é uma simplificação didática — o mecanismo real de crédito B2B não faz
+  parte do escopo do Manual de Operações do split payment.
+- Arranjo fixo  "boleto" para o hook do client PP (configurável via código ou env).
+- Sem mTLS, OAuth, ou certificado digital — o mock Prism roda sem autenticação.
+- CNPJ tratado como string livre, sem validação de dígitos ou formato alfanumérico.
+
+## Referências de engenharia (API + banco de dados)
+
+- **Go standard library** (`net/http`, `database/sql`, `encoding/json`) — https://pkg.go.dev/std
+- **ServeMux com roteamento por método+path** (Go 1.22+) — https://pkg.go.dev/net/http#ServeMux
+  Justifica não precisar de router externo.
+- **Driver SQLite**: `modernc.org/sqlite v1.54.0` — puro Go (sem cgo), build portável sem GCC,
+  ativamente mantido, implementação pura do protocolo SQLite. Justificativa: manter `make build`
+  simples em qualquer plataforma, sem dependência de toolchain C.
+- **Convenções REST/HTTP status codes** — RFC 9110 — https://www.rfc-editor.org/rfc/rfc9110.html
+- **Testes com `net/http/httptest`** — https://pkg.go.dev/net/http/httptest
+- **Prism (Stoplight)** — https://github.com/stoplightio/prism — mock server gerado a partir de OpenAPI.
+  Dependência **dev-only** (via `npx`, não entra no `go.mod` nem no binário).
 
 ## Glossário rápido
 - **IBS**: Imposto sobre Bens e Serviços (substitui ICMS/ISS).
@@ -83,27 +111,6 @@ campo, endpoint ou regra de negócio, a fonte é esses arquivos, não a internet
 - **CGIBS**: Comitê Gestor do IBS.
 - **RFB**: Receita Federal do Brasil.
 - **Split payment**: segregação automática do tributo no momento do pagamento.
-
-## Se quisermos ficar mais realistas depois
-A documentação técnica oficial (Manual de Integração + Swagger da Plataforma
-Pública do Split Payment) foi publicada pela RFB/CGIBS em jun/2026. Já está anexada
-ao projeto (`docs-oficiais/`) e é referência primária pro vault (`_agent-vault/`) —
-mas continua fora do escopo do que a API deste repositório implementa (a API é uma
-simulação local, não integra com a Plataforma Pública de verdade).
-
----
-
-## Referências de engenharia (API + banco de dados)
-
-Usadas em conjunto com as referências de domínio tributário acima — estas são sobre *como construir* o
-software, não sobre as regras fiscais em si. Ver `AGENT.md`/`TASKS.md` pro escopo travado do projeto.
-
-- **Go standard library** (`net/http`, `database/sql`, `encoding/json`) — https://pkg.go.dev/std —
-  fonte primária pra tudo que não for regra de negócio nem SQL específico do driver escolhido.
-- **ServeMux com roteamento por método+path** (Go 1.22+) — https://pkg.go.dev/net/http#ServeMux —
-  justifica não precisar de router externo (chi, gorilla/mux) pro escopo deste projeto.
-- **Driver SQLite**: `modernc.org/sqlite` — driver puro-Go (sem cgo), mantém `make build` simples e
-  portátil sem depender de gcc/libsqlite3 no sistema.
-  ✅ `Fonte: https://pkg.go.dev/modernc.org/sqlite`
-- **Convenções REST/HTTP status codes** — RFC 9110 — https://www.rfc-editor.org/rfc/rfc9110.html
-- **Testes com `net/http/httptest`** — https://pkg.go.dev/net/http/httptest
+- **PP**: Plataforma Pública do Split Payment.
+- **PSP**: Instituição de Pagamento (ex: bancos, fintechs).
+- **MOC**: Mecanismo de Ocorrências — registro de falhas no split.

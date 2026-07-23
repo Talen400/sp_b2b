@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/Talen400/sp_b2b/internal/client/pp"
+	"github.com/Talen400/sp_b2b/internal/domain"
 	httpapi "github.com/Talen400/sp_b2b/internal/handler/http"
 	"github.com/Talen400/sp_b2b/internal/repository/sqlite"
 	"github.com/Talen400/sp_b2b/internal/seed"
@@ -17,6 +21,8 @@ func main() {
 	seedOnly := flag.Bool("seed", false, "Popular banco com cenário de demonstração")
 	port := flag.String("port", "8080", "Porta do servidor HTTP")
 	dbPath := flag.String("db", "data/split.db", "Caminho do arquivo SQLite")
+	ppURL := flag.String("pp-url", "", "URL da Plataforma Pública (mock Prism). Ex: http://localhost:4010")
+	ppTenant := flag.String("pp-tenant", "PSP-SIMULADOR-001", "Tenant-Id para a PP")
 	flag.Parse()
 
 	db, err := sqlite.Open(*dbPath)
@@ -49,9 +55,10 @@ func main() {
 		log.Printf("Banco não encontrado em %s, criando...", *dbPath)
 	}
 
-	handler := httpapi.NewHandler(
+	handler := newHandlerWithPP(
 		sqlite.NewCompanyRepository(db),
 		sqlite.NewTransactionRepository(db),
+		*ppURL, *ppTenant,
 	)
 	mux := handler.Router()
 
@@ -65,8 +72,56 @@ func main() {
 	log.Printf("  POST /api/v1/transactions")
 	log.Printf("  GET  /api/v1/transactions/{id}")
 	log.Printf("  GET  /api/v1/transactions?cnpj={cnpj}")
+	if *ppURL != "" {
+		log.Printf("PP notificação ativada -> %s", *ppURL)
+	}
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Erro ao iniciar servidor: %v", err)
 	}
+}
+
+func newHandlerWithPP(cr *sqlite.CompanyRepository, tr *sqlite.TransactionRepository, ppURL, ppTenant string) *httpapi.Handler {
+	if ppURL == "" {
+		return httpapi.NewHandler(cr, tr)
+	}
+
+	ppClient := pp.New(ppURL, ppTenant)
+
+	notifyFunc := func(ctx context.Context, txn domain.Transaction) *httpapi.PPNotification {
+		req := &pp.InformeTransacaoIniciadaRequest{
+			NSUId:       txn.ID,
+			CNPJRec:     txn.VendedorCNPJ,
+			VLInf:       pp.Decimal18_2(txn.ValorBruto),
+			VLIbs:       pp.Decimal18_2(txn.ValorIBS),
+			VLCbs:       pp.Decimal18_2(txn.ValorCBS),
+			DtHrCriacao: txn.Timestamp.Format(time.RFC3339),
+		}
+
+		ppCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		status, ppErr, err := ppClient.SendInformeTransacaoIniciada(ppCtx, "boleto", req)
+		if err != nil {
+			return &httpapi.PPNotification{
+				Status:      "failed",
+				Arrangement: "boleto",
+				Error:       err.Error(),
+			}
+		}
+		if ppErr != nil {
+			return &httpapi.PPNotification{
+				Status:      "failed",
+				Arrangement: "boleto",
+				Error:       ppErr.Error(),
+			}
+		}
+		_ = status
+		return &httpapi.PPNotification{
+			Status:      "sent",
+			Arrangement: "boleto",
+		}
+	}
+
+	return httpapi.NewHandlerWithPP(cr, tr, notifyFunc)
 }

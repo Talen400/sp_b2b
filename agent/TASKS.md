@@ -8,81 +8,54 @@ começar qualquer fase.
 ## Fase 0: Pivô de escopo — ✅ CONCLUÍDA (decisão registrada)
 
 Projeto migrou de "CLI simples em memória" para "API REST + SQLite persistente", mantendo a mesma lógica
-de domínio (cálculo de split, crédito tributário simplificado) já validada na versão anterior. Motivo:
-tornar o projeto um artefato de portfólio mais realista — API é o formato que recrutadores/avaliadores
-esperam ver, e "persistência de verdade" é a diferença entre brinquedo e sistema.
+de domínio (cálculo de split, crédito tributário simplificado) já validada na versão anterior.
 
 ---
 
-## Fase 1: Setup do projeto
+## Fase 1: Setup do projeto — ✅ CONCLUÍDA
 
-- `go mod init` do módulo.
-- Estrutura de pastas conforme `DIR.md`.
-- `Makefile` com todos os targets listados em `DIR.md` (podem começar como stubs que evoluem nas fases
-  seguintes).
-- Escolher e justificar o driver SQLite em `REFERENCES.md` (preferir driver puro-Go, sem cgo, pra manter
-  `make build` simples e portátil — decisão a registrar com a razão específica escolhida).
+## Fase 2: Camada de domínio — ✅ CONCLUÍDA
 
-## Fase 2: Camada de domínio (portada do simulador CLI)
+## Fase 3: Persistência — ✅ CONCLUÍDA
 
-- `internal/domain/split.go` — `CalculateSplit`, igual à versão CLI (centavos, `int64`, erro se
-  alíquotas somarem mais de 100%).
-- `internal/domain/company.go` e `transaction.go` — structs, sem métodos de persistência (isso é
-  repository).
-- Lógica de crédito tributário simplificada (empresa compradora acumula crédito = IBS+CBS pago; ao
-  vender, abate do que deve).
-- Testes cobrindo: split normal, valor zero, alíquotas zero, alíquotas > 100%, crédito
-  suficiente/insuficiente. Meta: essa é a camada com testes mais exaustivos do projeto (ver `AGENT.md`
-  regra 6).
+## Fase 4: HTTP — ✅ CONCLUÍDA
 
-## Fase 3: Persistência
+## Fase 5: Seed e demonstração — ✅ CONCLUÍDA
 
-- `migrations/0001_init.sql` — tabelas `companies` (cnpj PK, nome, saldo_credito INTEGER) e
-  `transactions` (id PK, vendedor_cnpj, comprador_cnpj, valor_bruto, aliquota_ibs, aliquota_cbs,
-  valor_liquido, valor_ibs, valor_cbs, credito_usado, timestamp).
-- `internal/repository/repository.go` — interfaces que o domínio/handler dependem (não a implementação
-  concreta).
-- `internal/repository/sqlite/` — implementação real com `database/sql`, queries parametrizadas (nunca
-  concatenar SQL — injeção de SQL não é aceitável nem em projeto de portfólio).
-- Testes de repository rodando contra um banco SQLite temporário (arquivo em `t.TempDir()` ou `:memory:`).
+## Fase 6: Polish e documentação — ✅ CONCLUÍDA
 
-## Fase 4: HTTP
+---
 
-- `internal/handler/http/router.go` — `http.NewServeMux()` com os 7 endpoints de `AGENT.md`.
-- `internal/handler/http/errors.go` — formato de erro único:
-  ```json
-  { "error": { "code": "VALIDATION_ERROR", "message": "descrição legível" } }
-  ```
-  Códigos HTTP: 400 (validação), 404 (não encontrado), 409 (conflito, ex: CNPJ duplicado), 500 (erro
-  interno — mensagem genérica pro cliente, log detalhado no servidor).
-- Handlers finos: decodificam JSON, chamam domínio + repository, codificam resposta. Nenhuma regra de
-  negócio dentro de um handler.
-- Testes de integração com `net/http/httptest` cobrindo happy path de cada endpoint + 1-2 erros
-  relevantes (CNPJ inválido, empresa inexistente, valor negativo).
+## Fase 7: Sandbox de integração com a Plataforma Pública (mock local)
 
-## Fase 5: Seed e demonstração
+Não existe um sandbox público hospedado pelo governo acessível sem credencial de PSP — só o Swagger/
+OpenAPI real, publicado pela RFB/CGIBS (`cgibs/openapi-v0_0_10.json`, colocado manualmente pelo
+usuário; PDF/DOCX/ZIP gitignorados). O objetivo desta fase é usar esse contrato real pra ver
+**integração de verdade** localmente: nosso código fazendo chamadas HTTP reais contra um servidor
+que responde exatamente como a Plataforma Pública responderia.
 
-- `internal/seed/seed.go` — reproduz o cenário fictício já validado no simulador CLI: Fazenda → Fábrica
-  → Mercado, com os mesmos valores (R$1.000 e R$3.000, IBS 12%/CBS 3%), agora persistido no banco.
-- `make seed` roda isso contra um banco já migrado.
-- Documentar no README um roteiro de `curl` (ou arquivo `.http`) que reproduz a demonstração via API,
-  não só via seed direto no banco.
+- **Ferramenta de mock**: Prism, da Stoplight — `npx @stoplight/prism-cli mock cgibs/openapi-v0_0_10.json`.
+  Dependência **dev-only** (via `npx`, não entra no `go.mod`). Documentar limitação: endpoints de long
+  polling com token de posição podem não ser plenamente mockados pelo Prism.
+- **`internal/client/pp/`** — pacote novo, cliente HTTP que fala com a Plataforma Pública (mockada em dev).
+  Implementa:
+  - `SendInformeTransacaoIniciada` — POST /api/v1/{arrj} (arranjo mapeado dinamicamente).
+  - `SendInformeSegregacao` — POST /api/v1/segregacao.
+  - `ConsultarSplitSuperInteligente` — GET long polling (start → continue → delete).
+- **Hook no `POST /transactions`**: se `PP_BASE_URL` estiver setada (flag `-pp-url` ou env var),
+  notifica o mock em goroutine fire-and-forget. Response inclui `pp_notification` com status.
+- **`make sandbox`** sobe o mock (via Prism) na porta 4010. Documentar no README.
+- **Critério de sucesso**: um `curl` real contra o mock com payload construído a partir do
+  dicionário de campos do Manual de Integração recebe resposta no formato exato do schema OpenAPI.
 
-## Fase 6: Polish e documentação
-
-- `gofmt`, `go vet` limpos.
-- README com: o que é o projeto, como rodar (`make build && make migrate && make seed && make run`),
-  lista de endpoints com exemplo de request/response, link pro vault de contexto tributário
-  (`_agent-vault`/`vault/` do repo, se publicado junto).
-- Conferir que nenhuma dependência externa ficou sem justificativa em `REFERENCES.md`.
+Esta fase é **opcional/demonstrativa** — não faz parte da Definição de "Pronto" original.
 
 ---
 
 ## Definição de "Pronto"
 
-- Todos os 7 endpoints de `AGENT.md` funcionando, com formato de erro padronizado.
-- `make build`, `make test`, `make migrate`, `make seed`, `make run` funcionam do zero num checkout
-  limpo.
+- Todos os 7 endpoints funcionando, com formato de erro padronizado.
+- `make build`, `make test`, `make migrate`, `make seed`, `make run` funcionam do zero num checkout limpo.
 - Camada de domínio com testes exaustivos; handlers com testes de integração básicos.
 - Nenhuma regra de negócio vazando pra dentro de um handler HTTP ou de uma query SQL.
 - README permite que alguém sem contexto rode a demonstração completa em menos de 5 comandos.

@@ -1,74 +1,69 @@
 # Armadilhas Comuns para Pessoas Desenvolvedoras
 
 ## TL;DR
-Modelar split payment em código tem armadilhas específicas: usar float para
-valor monetário, confundir "valor informado" com "valor segregado", assumir
-que CNPJ é só numérico, e esquecer que split não é apuração. Esta nota lista
-os erros mais comuns e como evitá-los.
-
-## Por que isso importa pra quem programa
-Erros de modelagem tributária podem gerar inconsistências contábeis,
-recolhimento incorreto e risco fiscal para as empresas integradas. Conhecer
-as armadilhas antes de programar evita retrabalho.
+Modelar split payment em código tem armadilhas específicas validadas pelos manuais oficiais da RFB/CGIBS. Esta nota lista as mais críticas observadas no Manual de Integração e no Manual de Operações.
 
 ## Armadilhas
 
 ### 1. Usar float/double para valores monetários
-O Manual de Integração especifica que valores monetários são em **centavos**
-(campo `valorBruto` como inteiro). Usar ponto flutuante causa erros de
-arredondamento — um centavo de diferença em milhões de transações vira um
-problema grande.
-✅ `Fonte: Manual de Integração, seção 4.2 — campo valorBruto`
-⚠️ **No nosso simulador Go:** usamos `int64` (centavos) — solução correta.
+A PP especifica Decimal(18,2) representado como **string** no JSON. Em Go, `float64` causa erros de arredondamento.
+✅ Solução: `int64` (centavos). Conversão para string com 2 casas decimais na serialização.
 
-### 2. Confundir "Informado" com "Segregado"
-- **Valor Informado:** o que consta no Documento Fiscal (quanto de IBS/CBS
-  deve ser pago naquela operação).
-- **Valor Segregado:** o que efetivamente foi separado no momento do pagamento
-  (pode divergir do informado em caso de pagamento parcial, desconto, etc.).
-O split opera sobre o **valor Segregado**, não sobre o Informado.
-✅ `Fonte: Manual de Operações, seção 3.1`
+### 2. Ignorar os headers obrigatórios
+`Message-Id`, `Correlation-Id`, `Tenant-Id` e `Timestamp` são **obrigatórios** em toda requisição à PP. Faltar um deles causa erro 400.
+✅ Solução: cliente HTTP que injeta os headers automaticamente. Message-Id e Correlation-Id como UUID4.
 
-### 3. Assumir que CNPJ é só numérico
-A partir de **julho/2026**, o CNPJ pode conter letras (CNPJ Alfanumérico),
-seguindo o padrão RFC 6030. Sistemas que validam CNPJ como "apenas dígitos"
-vão quebrar.
-⚠️ `Fonte: imprensa especializada — RFB publicou instrução normativa em mai/2026`
+### 3. Confundir Informe de Segregação com Informe Preliminar de Pagamento
+- **Preliminar:** informativo, não vinculante, uma transação por vez, enviado logo após o pagamento. ⚠️ É descartado quando o Informe de Segregação chega.
+- **Segregação:** definitivo, vinculante, em lote (2x/dia útil), gera obrigação de Repasse Financeiro.
+✅ Solução: implementar ambos os fluxos corretamente — o Preliminar é quase um "ping" pro governo.
 
-### 4. Esquecer que split não é apuração
-O split segrega o tributo no pagamento, mas **não calcula o crédito**
-tributário — isso é feito na apuração contábil periódica (geralmente mensal).
-Uma transação pode ter split correto mas crédito incorreto se o sistema não
-escriturar os valores adequadamente.
-⚠️ `Fonte: nosso simulador (simplificação didática) — no mundo real, escrituração é separada`
+### 4. Assumir endpoint único para todos os arranjos
+Cada arranjo tem seu próprio endpoint:
+- `POST /api/v1/boleto` (não `/api/v1/transacao-unica`)
+- `POST /api/v1/pix-dinamico`
+- `POST /api/v1/pix-automatico`
+- `POST /api/v1/pix-estatico`
+- `POST /api/v1/ted`
+- `POST /api/v1/tef`
+- `POST /api/v1/segregacao` (este sim é único para lote)
+✅ Solução: mapear o arranjo correto no cliente — não existe "endpoint genérico de transação".
 
-### 5. Ignorar a diferença de alíquota por UF
-O IBS é cobrado no **destino**. Um sistema que usa sempre a alíquota do
-vendedor (origem) calcula o tributo errado. A alíquota varia por estado e
-município do comprador.
-✅ `Fonte: EC 132/2023, art. 156-A, §1º`
+### 5. Não tratar retornabilidade
+A PP sinaliza se um erro é retentável ou não. Erro 400/422/409 **não deve** ser retentado. Erro 500/503 **deve** ser retentado com backoff exponencial.
+✅ Solução: implementar retry logic condicional baseado no `status` e no campo `retornabilidade`.
 
-### 6. Tratar B2B e B2C como iguais
-Como visto em [[07-B2B-vs-B2C]], no B2C o consumidor não vê os campos fiscais.
-Se o checkout expõe valores de IBS/CBS para um consumidor PF, está fora da
-regra.
-✅ `Fonte: Manual de Operações, seção 8`
+### 6. Misturar centavos com reais no campo `vlInf`
+O campo `vlInf` no payload da PP espera Decimal(18,2) como string. Enviar `1000` (significando R$10,00) quando deveria enviar `"1000.00"` causa rejeição.
+✅ Solução: serializador que converte `int64` centavos para string Decimal(18,2). Ex: `100000` → `"1000.00"`.
 
-### 7. Subestimar a importância do MOC
-O Mecanismo de Ocorrências não é opcional — falhas de split precisam ser
-registradas e tratadas. Um sistema que ignora o MOC pode perder o rastreio
-de splits mal-sucedidos.
-✅ `Fonte: Manual de Operações, seção 7`
+### 7. Ignorar o Retorno Super Inteligente
+Nos arranjos Super Inteligente (Boleto, Pix Dinâmico, Pix Automático), o governo pode corrigir os valores depois do Informe de Transação Iniciada. Ignorar o long polling significa usar valores incorretos no Informe de Segregação.
+✅ Solução: implementar o ciclo de long polling (start → continue → delete) antes de enviar o Informe de Segregação.
 
-## Perguntas de autoavaliação
-1. Qual o tipo de dado correto para representar valores monetários na API da
-   Plataforma Pública?
-2. Qual a diferença entre valor "Informado" e valor "Segregado"?
-3. Por que usar a alíquota do vendedor em vez da do comprador dá erro no IBS?
+### 8. Tratar token de posição como opcional
+O header `proximoToken` no response do long polling é **obrigatório** para continuar a consulta. Perdê-lo significa recomeçar do início.
+✅ Solução: extrair e armazenar o token a cada response. Usar na URL da próxima requisição.
+
+### 9. Não tratar CNPJ alfanumérico
+A partir de julho/2026 (IN RFB 2.229/2024), CNPJ pode conter letras. Validar como "apenas 14 dígitos" quebra.
+✅ Solução: tratar CNPJ como string livre, sem validação de formato rígido de dígitos.
+
+### 10. Ignorar a diferença de modelo Inteligente vs Super Inteligente
+- **Inteligente** (Pix Estático, TED, TEF): sem retorno do governo. Valor informado = valor segregado.
+- **Super Inteligente** (Boleto, Pix Dinâmico, Pix Automático): governo pode corrigir. Requer long polling.
+Misturar os fluxos causa inconsistência.
+✅ Solução: no cliente, bifurcar o comportamento por arranjo (Inteligente: informa e pronto; Super Inteligente: informa + consulta retorno antes de segregar).
+
+### 11. Subestimar o MOC (Mecanismo de Ocorrências)
+Falhas de split (ex: split não realizado, valor divergente) precisam ser registradas no MOC. Ignorá-las pode gerar sanções regulatórias.
+✅ Solução: após cada informe, verificar se houve erro e registrar ocorrência no endpoint apropriado da PP. `Manual de Operações, seção 7`.
+
+### 12. Esquecer que o PSP Recebedor Direto é o responsável
+Mesmo que exista um PSP Recebedor Indireto na relação comercial, o **Direto** é quem responde perante a PP. Implementar a comunicação no PSP errado causa rejeição.
+✅ Solução: no `Tenant-Id`, usar sempre o identificador do PSP Recebedor Direto.
 
 ## Fontes
-- ✅ Manual de Integração, seção 4.2
-- ✅ Manual de Operações, seções 3.1, 7, 8
-- ✅ EC 132/2023, art. 156-A, §1º
-- ⚠️ imprensa especializada (CNPJ alfanumérico)
-- ⚠️ nosso simulador (simplificação didática)
+- ✅ Manual de Integração v1.0, seções 3.6 (long polling), 4 (dicionário), 4.2 (Decimal), 5 (erros)
+- ✅ Manual de Operações, seções 2.1–2.2 (modelos), 3.1 (categorias de valor), 4 (informes), 7 (MOC)
+- ✅ IN RFB 2.229/2024 (CNPJ alfanumérico)

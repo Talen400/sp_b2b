@@ -1,0 +1,15 @@
+# Documentação oficial do governo — não versionar PDF/DOCX/ZIP.
+# openapi-v0_0_10.json fica versionado (pequeno, texto).
+/cgibs/*.pdf
+/cgibs/*.docx
+/cgibs/*.zip
+
+# Banco de dados local (SQLite) e binário compilado
+/data/*.db
+/bin/
+
+# Artefatos de sandbox/mock local (ver TASKS.md, Fase 7)
+/.sandbox/
+
+# Montagens externas (Docker, etc.)
+/mnt/
