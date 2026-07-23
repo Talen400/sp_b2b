@@ -1,9 +1,8 @@
-package split
+package domain
 
 import (
 	"fmt"
 	"math"
-	"time"
 )
 
 type SplitResult struct {
@@ -12,21 +11,10 @@ type SplitResult struct {
 	ValorCBS int64
 }
 
-type Transaction struct {
-	ID            string
-	VendedorCNPJ  string
-	CompradorCNPJ string
-	ValorBruto    int64
-	AliquotaIBS   float64
-	AliquotaCBS   float64
-	ValorIBS      int64
-	ValorCBS      int64
-	Liquido       int64
-	CreditoUsado  int64
-	Timestamp     time.Time
-}
-
 func CalculateSplit(valorBruto int64, aliquotaIBS, aliquotaCBS float64) (SplitResult, error) {
+	if valorBruto < 0 {
+		return SplitResult{}, fmt.Errorf("valor bruto não pode ser negativo: %d", valorBruto)
+	}
 	if aliquotaIBS < 0 || aliquotaCBS < 0 {
 		return SplitResult{}, fmt.Errorf("alíquotas não podem ser negativas: IBS=%.4f, CBS=%.4f", aliquotaIBS, aliquotaCBS)
 	}

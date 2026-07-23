@@ -1,86 +1,108 @@
-# AGENT.md
+# AGENT.md — Split Payment API (Go + banco de dados)
 
 ## Localização dos arquivos
+`AGENT.md`, `DIR.md`, `REFERENCES.md`, `TASKS.md`, `PROGRESS.md` ficam na raiz do repo, ao lado do
+código (`cmd/`, `internal/`). Não confundir com `_agent-vault/` (controle do vault de conhecimento
+tributário — projeto irmão, documentação, sem código).
 
-Estes 5 arquivos (`AGENT.md`, `DIR.md`, `REFERENCES.md`, `TASKS.md`, `PROGRESS.md`) ficam juntos em
-`_agent-vault/`, na raiz do repositório — separados do conteúdo gerado, que vive em `vault/` (ver
-`DIR.md`). Mantém esses arquivos fora do grafo/busca do Obsidian (`Settings → Files & Links → Excluded
-files`), já que são "plano de controle", não conteúdo de estudo.
-
-Isso é um projeto **irmão** do simulador Go (`AGENT.md`/`TASK.md`/`PROGRESS.md`/`DIR.md`/`REFERENCES.md`
-na raiz do repo, sem o prefixo `_agent-vault`) — são dois agentes diferentes, com objetivos diferentes,
-compartilhando só o mesmo repositório. Não confundir os dois conjuntos de arquivos.
+Esses arquivos substituem os antigos `AGENT.md`/`TASK.md` da versão CLI do simulador — o projeto pivotou
+de "CLI em memória" para "API REST + banco de dados persistente". `TASK.md` foi renomeado `TASKS.md` pra
+acompanhar o padrão do vault (arquivo mutável, ao contrário deste, que é regra permanente).
 
 ## Papel
+Você é um agente de engenharia trabalhando sozinho em sandbox. Constrói uma **API REST em Go**, com
+persistência em banco de dados, que simula o fluxo de split payment B2B (segregação de IBS/CBS +
+crédito tributário simplificado). Vai para portfólio — o código e os testes importam tanto quanto a
+funcionalidade.
 
-Você é um agente de estudo que transforma o tema **Split Payment / Reforma Tributária (IBS/CBS)** em uma
-**árvore de conhecimento no Obsidian**, voltada para devs sem background tributário: notas atômicas,
-interligadas por `[[wikilinks]]`, organizadas por tema.
-
-Este arquivo contém as regras **permanentes** — valem para qualquer tarefa, em qualquer sessão. Não edite
-este arquivo para mudar o que fazer *agora*; isso vai em `TASKS.md`. Para saber onde as coisas ficam, veja
-`DIR.md`. Para saber a ordem de prioridade das fontes, veja `REFERENCES.md`. Para saber o que já foi
-gerado, veja `PROGRESS.md`.
-
----
-
-## Regras Gerais (sempre válidas, qualquer tarefa)
-
-1. **Nunca apresente a simplificação do nosso simulador Go como se fosse a regra real.** O vault é sobre
-   o split payment de verdade (lei + manuais oficiais). Se uma nota precisar comparar com o que o
-   simulador faz, isso tem que estar claramente rotulado como "no nosso projeto, simplificamos X" — nunca
-   misturado ao corpo da explicação técnica real.
-
-2. **Não presuma conteúdo que não foi lido de verdade.** Antes de descrever qualquer regra (ex: "o Repasse
-   Financeiro ocorre em D+2"), verifique na LC 214/2025 ou nos manuais oficiais anexados ao projeto. Se
-   algo não estiver explicitamente nessas fontes, marque como `⚠️ não verificado`.
-
-3. **Cite fontes explicitamente.** Toda afirmação técnica deve vir com uma das tags abaixo. A ordem de
-   prioridade e os detalhes de cada fonte estão em `REFERENCES.md`:
-   - `Fonte: LC 214/2025` / `Fonte: EC 132/2023`
-   - `Fonte: Manual de Operações — Split Payment`
-   - `Fonte: Manual de Integração — Plataforma Pública`
-   - `Fonte: imprensa especializada` (Migalhas, Contábeis, Jettax, gov.br/fazenda etc.)
-   - `Fonte: nosso simulador (simplificação didática)`
-   - `⚠️ não verificado`
-
-4. **Separe "o que é regra tributária" de "o que é decisão de arquitetura do nosso simulador".** Cada nota
-   deve deixar claro:
-   - **Regra real** (exigida por lei/norma/manual oficial)
-   - **Simplificação do projeto** (o que decidimos fazer no simulador pra caber no escopo)
-   - **Ainda incerto/em transição** (ex: alíquotas definitivas do IBS, que só se consolidam em 2033)
-
-5. **Marque incerteza explicitamente**, especialmente porque a reforma tributária ainda está em transição
-   (2026–2033) e normas complementares continuam saindo. Se uma afirmação não puder ser verificada pelas
-   fontes 1–3 de `REFERENCES.md`, marque como `⚠️ não verificado`.
-
-6. **Escreva em camadas.** Toda nota-conceito tem um resumo direto primeiro (o que é, pra que serve, sem
-   jargão fiscal) e só depois o aprofundamento técnico/legal.
-
-7. **Sinalize o nível de confiança com moderação:**
-   - `✅` — confirmado na LC 214/2025 ou nos manuais oficiais
-   - `📚` — confirmado em fonte secundária confiável (imprensa especializada, gov.br)
-   - `⚠️` — não verificado / regra ainda em definição / simplificação nossa
-
-8. **Nada de emoji decorativo fora da legenda de confiança**, com uma exceção: o emoji fixo `🔍` no título
-   do callout de aprofundamento: `[!note]- 🔍 Aprofundando: ...`
-
-9. **Use callout nativo do Obsidian (`> [!note]-`) para blocos recolhíveis**, nunca `<details>`/`<summary>`
-   em HTML puro.
-
-10. **Antes de gerar qualquer nota nova, consulte `PROGRESS.md`.** Não regenere notas já concluídas sem
-    motivo explícito. Ao terminar uma rodada, atualize `PROGRESS.md` com o que foi criado e o que ficou
-    pendente/não verificado.
+Este arquivo contém as regras **permanentes**. O que fazer *agora* vai em `TASKS.md`. Onde as coisas
+ficam, `DIR.md`. Fontes de domínio (tributário) e de engenharia, `REFERENCES.md`. O que já foi feito,
+`PROGRESS.md`.
 
 ---
 
-## Formato Padrão de Nota
+## Regras Gerais (sempre válidas)
 
-1. **TL;DR** — resumo direto, sem jargão, 2-3 linhas.
-2. **Por que isso importa pra quem programa** — conexão prática com decisões de modelagem de sistema.
-3. **Funcionamento** — o aprofundamento técnico/legal.
-4. **Callout de aprofundamento** — `> [!note]- 🔍 Aprofundando: ...` para detalhes extras/exceções.
-5. **Perguntas de autoavaliação** — 2-4 perguntas que testam se o conceito foi entendido.
-6. **Fontes** — cada afirmação técnica com sua tag de fonte (ver regra 3).
+1. **Leia `TASKS.md` e `PROGRESS.md` antes de tocar em código.** Não regenere o que já está marcado como
+   concluído sem motivo explícito. Ao terminar uma etapa, atualize `PROGRESS.md`.
 
-Links entre notas usam `[[wikilink]]` do Obsidian, apontando para o nome do arquivo sem extensão.
+2. **Escopo travado, no estilo "subject".** A seção "Requisitos Obrigatórios" abaixo é fixa — não
+   adicione autenticação, múltiplos usuários, UI web, filas assíncronas ou qualquer coisa fora dela sem
+   que isso primeiro seja escrito em `TASKS.md`. Preferível fazer pouco e bem testado do que muito e
+   frágil.
+
+3. **Dependências externas: mínimas e justificadas.** Cada dependência fora da standard library do Go
+   precisa de uma linha em `REFERENCES.md` explicando por que ela é necessária (a stdlib não cobre) —
+   nunca adicionar framework HTTP (gin/echo/fiber) ou ORM (gorm) só por conveniência. Usar
+   `net/http` (ServeMux nativo, Go 1.22+) e `database/sql` puro. Driver de banco é a única exceção
+   aceitável de cara (a stdlib não inclui driver de SQL nenhum).
+
+4. **Separação em camadas estrita, sem vazamento.**
+   - `internal/domain/` — regras de negócio puras (cálculo de split, lógica de crédito). **Zero** import
+     de `net/http`, `database/sql` ou qualquer coisa de infraestrutura. Se o domínio importa infra, é bug
+     de arquitetura, não detalhe.
+   - `internal/repository/` — implementa persistência. Domínio não conhece SQL; repository não conhece
+     HTTP.
+   - `internal/handler/` — HTTP: decodifica request, chama domínio/repository, codifica response. Sem
+     regra de negócio aqui.
+
+5. **Todo endpoint tem contrato de erro padronizado.** Nunca vazar erro interno cru (`err.Error()`) pro
+   cliente. Formato de erro JSON único, definido em `TASKS.md`, usado em toda a API.
+
+6. **Teste a lógica de domínio antes de expor no HTTP.** Toda função em `internal/domain/` tem
+   `_test.go` cobrindo caso normal, valor zero, e caso de erro/limite. Handlers HTTP podem ter testes de
+   integração mais leves (happy path + 1-2 erros), não precisam da mesma exaustão do domínio.
+
+7. **Banco de dados: migrations versionadas, nunca `AutoMigrate` mágico.** Arquivos SQL numerados em
+   `migrations/`, aplicados na inicialização ou via comando explícito — nunca criação de schema
+   implícita dentro do código Go sem arquivo rastreável.
+
+8. **Valores monetários em centavos (`int64`), nunca `float64`.** Isso já valia no simulador CLI e
+   continua valendo — inclusive no schema do banco (coluna `INTEGER`, não `REAL`/`DECIMAL` de ponto
+   flutuante).
+
+9. **`Makefile` é a interface oficial do projeto.** Não documentar comandos `go run`/`go build` soltos no
+   README como forma primária de uso — o Makefile expõe os targets padronizados (ver `DIR.md`). Isso é
+   estilo 42: quem chega no projeto não deveria precisar adivinhar o comando certo.
+
+10. **Cite a fonte de qualquer regra de domínio tributário que aparecer em comentário/doc do código**
+    (`// Fonte: Manual de Operações — Split Payment, seção X`), do mesmo jeito que as notas do vault
+    fazem. Código sem fonte pra uma regra fiscal específica é `⚠️ não verificado` — documente como tal.
+
+---
+
+## Requisitos Obrigatórios (escopo travado — "subject")
+
+### Domínio
+- `Company` (CNPJ, nome, saldo de crédito em centavos).
+- `Transaction` (id, CNPJ vendedor, CNPJ comprador, valor bruto, alíquotas de IBS/CBS, timestamp,
+  resultado do split, crédito usado/gerado).
+- `CalculateSplit` — função pura, testada exaustivamente (ver regras do simulador original em
+  `PROGRESS.md`/histórico — a lógica de cálculo não muda, só ganha persistência).
+
+### Persistência
+- SQLite (arquivo local — sem servidor de banco separado, mantém o projeto rodável com um único
+  binário + um arquivo `.db`). Migrations em `migrations/0001_init.sql` etc.
+
+### Endpoints mínimos (todos em `/api/v1`)
+- `POST /companies` — cria empresa.
+- `GET /companies/{cnpj}` — detalhe + saldo de crédito.
+- `GET /companies` — lista.
+- `POST /transactions` — simula uma venda entre duas empresas (calcula e persiste o split + atualiza
+  crédito).
+- `GET /transactions` — histórico, com filtro opcional por CNPJ.
+- `GET /transactions/{id}` — detalhe de uma transação.
+- `GET /healthz` — liveness check simples (obrigatório em qualquer API "de verdade").
+
+### Qualidade
+- `go vet` e `gofmt -l` limpos.
+- Testes de domínio com cobertura das funções de cálculo/crédito.
+- Cenário fictício da demonstração (3 empresas, 2 vendas — ver histórico do projeto) reproduzido via
+  script de seed, não hardcoded no `main.go`.
+
+## Fora de Escopo (não implementar sem atualizar TASKS.md primeiro)
+- Autenticação/autorização.
+- Múltiplos tenants/usuários.
+- Frontend/UI.
+- Integração real com a Plataforma Pública (RFB/CGIBS) — continua sendo simulação local.
+- Filas, workers assíncronos, cache distribuído.

@@ -1,72 +1,90 @@
 # TASKS.md
 
-Plano de execução. Este arquivo é o que muda entre sessões — ao concluir uma fase ou trocar o foco, edite
-aqui, não em `AGENT.md`.
-
-Antes de começar qualquer fase, consulte `PROGRESS.md` para não regenerar o que já existe.
+Plano de execução. Muda entre sessões — edite aqui, não em `AGENT.md`. Consulte `PROGRESS.md` antes de
+começar qualquer fase.
 
 ---
 
-## Fase 1: Leitura e Mapeamento Base — ✅ CONCLUÍDA
+## Fase 0: Pivô de escopo — ✅ CONCLUÍDA (decisão registrada)
 
-LC 214/2025, EC 132/2023 e os manuais oficiais do split payment já foram consultados. Estrutura completa
-registrada em `REFERENCES.md`. Notas iniciais (`00-Indice`, `01-Visao-Geral-da-Reforma`,
-`05-Split-Payment-Mecanismo`, `06-Plataforma-Publica-Documentacao-Tecnica`) já existem — ver
-`PROGRESS.md`.
-
----
-
-## Fase 2: Completar as Notas Base
-
-Gerar as notas que faltam, cada uma seguindo o formato padrão de `AGENT.md`. Caminhos em `DIR.md`.
-
-- `02-Cronograma-2026-2033.md` — linha do tempo ano a ano (2026 teste → 2027 CBS plena → 2029-2032
-  transição do IBS → 2033 regime pleno). Fonte: EC 132/2023 + LC 214/2025 + gov.br/fazenda.
-- `03-IBS-e-CBS-Basico.md` — o que cada tributo substitui (ICMS/ISS → IBS; PIS/Cofins → CBS), quem
-  administra (CGIBS vs RFB), por que dois tributos e não um.
-- `04-Nao-Cumulatividade-e-Credito.md` — o conceito mais importante pro nosso simulador B2B: como o
-  crédito tributário flui na cadeia de produção. Ligar explicitamente com o que o simulador faz
-  (`TASK.md` do projeto Go, TASK-03).
-- `07-B2B-vs-B2C.md` — por que o Pagador Efetivo PF não tem visibilidade dos campos fiscais (ver Manual
-  de Operações, seção 8, Princípio 1) mas a PJ tem visibilidade ampla (Princípio 2).
-- `08-Simples-Nacional-e-MEI.md` — sem mudança em 2026; decisão de permanência/migração até set/2026;
-  IBS/CBS "por dentro ou por fora" do DAS.
-- `09-Regimes-Especiais-e-Aliquotas-Reduzidas.md` — cesta básica (alíquota zero, Anexo I e XV), redução
-  de 60% (saúde, educação, Anexo VII), redução de 30% (profissionais liberais).
-- `10-Imposto-Seletivo.md` — o "imposto do pecado" (produtos nocivos à saúde/meio ambiente), separado do
-  IBS/CBS, fora do escopo da Fase 1 do split payment (ver Manual de Operações, seção 1.2).
-- `11-Glossario.md` — no mínimo 15 termos (IBS, CBS, EC 132, LC 214, CGIBS, RFB, split payment, PSP
-  Recebedor Direto/Indireto, Documento Fiscal, crédito tributário, não-cumulatividade, Modelo
-  Inteligente/Super Inteligente, Plataforma Pública, alíquota de referência).
-- `12-Armadilhas-Comuns-para-Devs.md` — erros típicos: tratar valor monetário como float, confundir
-  Informado com Segregado, assumir que todo CNPJ é só numérico (muda em 07/2026), esquecer que
-  split ≠ apuração/crédito.
-- `13-Fontes-e-Links-Oficiais.md` — espelha `REFERENCES.md`, mas em formato de nota consultável dentro
-  do próprio vault (com links clicáveis), não é duplicação burra — é o "cole aqui pra conferir a fonte
-  primária" pra quem está lendo as notas, não o `_agent-vault/`.
+Projeto migrou de "CLI simples em memória" para "API REST + SQLite persistente", mantendo a mesma lógica
+de domínio (cálculo de split, crédito tributário simplificado) já validada na versão anterior. Motivo:
+tornar o projeto um artefato de portfólio mais realista — API é o formato que recrutadores/avaliadores
+esperam ver, e "persistência de verdade" é a diferença entre brinquedo e sistema.
 
 ---
 
-## Fase 3: MOC e Revisão Cruzada
+## Fase 1: Setup do projeto
 
-- Atualizar `00-Indice.md` com links para todas as 14 notas, confirmando que nenhum `[[wikilink]]` está
-  quebrado.
-- Revisar `05-Split-Payment-Mecanismo.md` e `06-Plataforma-Publica-Documentacao-Tecnica.md` (já
-  existentes) contra o formato padrão desta versão do `AGENT.md` — foram escritas antes dessa
-  padronização, podem não ter todas as 6 seções (TL;DR, contexto, funcionamento, aprofundamento,
-  autoavaliação, fontes).
+- `go mod init` do módulo.
+- Estrutura de pastas conforme `DIR.md`.
+- `Makefile` com todos os targets listados em `DIR.md` (podem começar como stubs que evoluem nas fases
+  seguintes).
+- Escolher e justificar o driver SQLite em `REFERENCES.md` (preferir driver puro-Go, sem cgo, pra manter
+  `make build` simples e portátil — decisão a registrar com a razão específica escolhida).
+
+## Fase 2: Camada de domínio (portada do simulador CLI)
+
+- `internal/domain/split.go` — `CalculateSplit`, igual à versão CLI (centavos, `int64`, erro se
+  alíquotas somarem mais de 100%).
+- `internal/domain/company.go` e `transaction.go` — structs, sem métodos de persistência (isso é
+  repository).
+- Lógica de crédito tributário simplificada (empresa compradora acumula crédito = IBS+CBS pago; ao
+  vender, abate do que deve).
+- Testes cobrindo: split normal, valor zero, alíquotas zero, alíquotas > 100%, crédito
+  suficiente/insuficiente. Meta: essa é a camada com testes mais exaustivos do projeto (ver `AGENT.md`
+  regra 6).
+
+## Fase 3: Persistência
+
+- `migrations/0001_init.sql` — tabelas `companies` (cnpj PK, nome, saldo_credito INTEGER) e
+  `transactions` (id PK, vendedor_cnpj, comprador_cnpj, valor_bruto, aliquota_ibs, aliquota_cbs,
+  valor_liquido, valor_ibs, valor_cbs, credito_usado, timestamp).
+- `internal/repository/repository.go` — interfaces que o domínio/handler dependem (não a implementação
+  concreta).
+- `internal/repository/sqlite/` — implementação real com `database/sql`, queries parametrizadas (nunca
+  concatenar SQL — injeção de SQL não é aceitável nem em projeto de portfólio).
+- Testes de repository rodando contra um banco SQLite temporário (arquivo em `t.TempDir()` ou `:memory:`).
+
+## Fase 4: HTTP
+
+- `internal/handler/http/router.go` — `http.NewServeMux()` com os 7 endpoints de `AGENT.md`.
+- `internal/handler/http/errors.go` — formato de erro único:
+  ```json
+  { "error": { "code": "VALIDATION_ERROR", "message": "descrição legível" } }
+  ```
+  Códigos HTTP: 400 (validação), 404 (não encontrado), 409 (conflito, ex: CNPJ duplicado), 500 (erro
+  interno — mensagem genérica pro cliente, log detalhado no servidor).
+- Handlers finos: decodificam JSON, chamam domínio + repository, codificam resposta. Nenhuma regra de
+  negócio dentro de um handler.
+- Testes de integração com `net/http/httptest` cobrindo happy path de cada endpoint + 1-2 erros
+  relevantes (CNPJ inválido, empresa inexistente, valor negativo).
+
+## Fase 5: Seed e demonstração
+
+- `internal/seed/seed.go` — reproduz o cenário fictício já validado no simulador CLI: Fazenda → Fábrica
+  → Mercado, com os mesmos valores (R$1.000 e R$3.000, IBS 12%/CBS 3%), agora persistido no banco.
+- `make seed` roda isso contra um banco já migrado.
+- Documentar no README um roteiro de `curl` (ou arquivo `.http`) que reproduz a demonstração via API,
+  não só via seed direto no banco.
+
+## Fase 6: Polish e documentação
+
+- `gofmt`, `go vet` limpos.
+- README com: o que é o projeto, como rodar (`make build && make migrate && make seed && make run`),
+  lista de endpoints com exemplo de request/response, link pro vault de contexto tributário
+  (`_agent-vault`/`vault/` do repo, se publicado junto).
+- Conferir que nenhuma dependência externa ficou sem justificativa em `REFERENCES.md`.
+
+---
 
 ## Definição de "Pronto"
 
-A pasta `vault/` contém:
-
-- `00-Indice.md` navegável, com todos os links funcionando.
-- **14 notas-conceito** (ver `DIR.md`).
-- `11-Glossario.md` com pelo menos 15 termos.
-- Cada nota segue o formato padrão (TL;DR, contexto pra dev, funcionamento, aprofundamento,
-  autoavaliação, fontes).
-- Toda afirmação técnica tem fonte explicitamente citada (lei, manual oficial, ou marcada como
-  simplificação/não verificado).
-- Nenhuma regra do nosso simulador Go foi apresentada como se fosse a regra tributária real.
+- Todos os 7 endpoints de `AGENT.md` funcionando, com formato de erro padronizado.
+- `make build`, `make test`, `make migrate`, `make seed`, `make run` funcionam do zero num checkout
+  limpo.
+- Camada de domínio com testes exaustivos; handlers com testes de integração básicos.
+- Nenhuma regra de negócio vazando pra dentro de um handler HTTP ou de uma query SQL.
+- README permite que alguém sem contexto rode a demonstração completa em menos de 5 comandos.
 
 **GO.**
